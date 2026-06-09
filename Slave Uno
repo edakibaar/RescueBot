@@ -1,0 +1,87 @@
+#include <Wire.h>2
+
+// --- PİN TANIMLAMALARI ---
+#define PIR_PIN 2      // HC-SR501 OUT pini
+#define TRIG_PIN 3     // HC-SR04 Trigger pini
+#define ECHO_PIN 4     // HC-SR04 Echo pini
+
+// --- GLOBAL SENSÖR DEĞİŞKENLERİ ---
+// volatile takısı, bu değişkenlerin I2C kesmesi (interrupt) esnasında anlık güncellenmesini sağlar.
+volatile byte pirData = 0;
+volatile byte distData = 0;
+
+// Zamanlama değişkeni (delay kullanmamak için)
+unsigned long previousMillis = 0;
+const long interval = 200; // Her 200 milisaniyede bir sensörleri yenile
+
+void setup() {
+  // Pin modlarının ayarlanması
+  pinMode(PIR_PIN, INPUT);
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  // Slave olarak I2C veri yoluna katıl (Adres: 8)
+  Wire.begin(8);
+ 
+  // Master Uno veri istediğinde tetiklenecek fonksiyonu kaydet
+  Wire.onRequest(requestEvent);
+ 
+  // Hata ayıklama için bilgisayar bağlantısı
+  Serial.begin(9600);
+  Serial.println("Slave Uno Başlatıldı. Sensörler dinleniyor...");
+}
+
+void loop() {
+  unsigned long currentMillis = millis();
+ 
+  // Sensörleri ana döngüyü ve I2C hattını yormadan belirli aralıklarla oku
+  if (currentMillis - previousMillis >= interval) {
+    previousMillis = currentMillis;
+   
+    // 1. PIR Sensörünü Oku (Hareket varsa 1, yoksa 0)
+    pirData = digitalRead(PIR_PIN);
+   
+    // 2. Mesafe Sensörünü Oku
+    distData = readDistance();
+   
+    // Bilgisayardan anlık kontrol için seri porta yazdır (Saha testinde sökülebilir)
+    Serial.print("PIR: "); Serial.print(pirData);
+    Serial.print(" | Mesafe: "); Serial.print(distData);
+    Serial.println(" cm");
+  }
+}
+
+// --- HC-SR04 MESAFE HESAPLAMA FONKSİYONU ---
+byte readDistance() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+ 
+  // Sinyalin geri dönüş süresini mikro saniye cinsinden ölç (30ms zaman aşımı)
+  long duration = pulseIn(ECHO_PIN, HIGH, 30000);
+ 
+  if (duration == 0) {
+    return 255; // Eğer sinyal geri dönmediyse önü tamamen boş demektir (Maks sınır)
+  }
+ 
+  long cm = duration / 29.1 / 2;
+ 
+  // Veriyi 1 byte (0-255) sınırları içinde tutmak için filtrele
+  if (cm > 255) cm = 255;
+  if (cm < 0) cm = 0;
+ 
+  return (byte)cm;
+}
+
+// --- I2C MASTER VERİ İSTEK FONKSİYONU ---
+// Master Uno "Wire.requestFrom(8, 2)" dediği anda bu fonksiyon loop'u durdurup anlık çalışır.
+void requestEvent() {
+  byte packet[2];
+  packet[0] = pirData;  // 1. Eleman: Canlı bilgisi
+  packet[1] = distData; // 2. Eleman: Mesafe bilgisi
+ 
+  // Master'a 2 byte'lık paketi fırlat
+  Wire.write(packet, 2);
+}
